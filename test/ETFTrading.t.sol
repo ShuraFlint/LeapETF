@@ -108,7 +108,7 @@ contract ETFTradingSepoliaTest is Test {
         return string(finalBytes);
     }
 
-    function test_format() public {
+    function test_format() public pure {
         console.log(formatAmount(123456789, 8));
         console.log(formatAmount(123456789, 6));
     }
