@@ -20,7 +20,7 @@ contract ETFTrading is IETFTrading, ERC20, Ownable {
     //100% = 1,000,000 用于费用计算的基数
     uint24 public constant HUNDREd_PERCENT = 1000000;
     //基数为 1，000，000
-    uint24 public constant FEE_DENOMINATOR = 1000000;
+    // uint24 public constant FEE_DENOMINATOR = 1000000;
     //0.3%的默认交易池费率
     uint24 public constant DEFAULT_POOL_FEE = 3000;
     //默认滑点容忍度5%
@@ -101,6 +101,7 @@ contract ETFTrading is IETFTrading, ERC20, Ownable {
             } else {
                 //首次投资，使用预设的初始化代币比例
                 //计算公式：tokenAmount = mintAmount * initTokenAmountPerShare / 1e18
+                //mulDivRoundingUp向上取整
                 tokenAmounts[i] = mintAmount.mulDivRoundingUp(
                     //表示每个ETF份额对应代币i的数量，是带有精度的
                     _initTokenAmountPerShares[i],
@@ -110,6 +111,7 @@ contract ETFTrading is IETFTrading, ERC20, Ownable {
         }
     }
 
+    //销毁指定数量的ETF，能够得到4中代币的数量
     function getRedeemTokenAmounts(
         uint256 burnAmount
     ) public view returns (uint256[] memory tokenAmounts) {
@@ -125,10 +127,12 @@ contract ETFTrading is IETFTrading, ERC20, Ownable {
             uint256 tokenReserve = IERC20(_tokens[i]).balanceOf(address(this));
             //tokenAmount / tokenReserve = burnAmount / totalSupply、
             // 本合约应给用户的token数量/本合约持有的token数量 = 本合约销毁的ETF数量/本合约已有的总ETF数量
+            //mulDiv向下取整
             tokenAmounts[i] = tokenReserve.mulDiv(burnAmount, totalSupply);
         }
     }
 
+    //使用一种代币srcToken来买mintAmount个ETF，
     function investWithToken(
         //代币合约地址：用什么代币来买ETF
         address srcToken,
@@ -143,6 +147,7 @@ contract ETFTrading is IETFTrading, ERC20, Ownable {
     ) external {
         address[] memory tokens = this.getTokens();
         if (tokens.length != swapPaths.length) revert InvalidArrayLength();
+        //得到铸造mintAmount数量的ETF所需要的四种代币的数量
         uint256[] memory tokenAmounts = getInvestTokenAmounts(mintAmount);
 
         //先将用户给的token全部转给本合约，之后剩余的token再转给用户
@@ -153,31 +158,35 @@ contract ETFTrading is IETFTrading, ERC20, Ownable {
         );
         // _approveToSwapRouter(srcToken);
         //本合约授权给交易池最大数量的代币，用于将srcToken转换成四种币
+        //使用 SafeERC20 的 forceApprove 方法，授权 swapRouter 可以无限额地支配本合约持有的 srcToken 代币。
         IERC20(srcToken).forceApprove(swapRouter, type(uint256).max);
 
         //一般是四种币来兑换指定数量的ETF，现在是只用指定的币来兑换ETF
         uint256 totalPaid;
         for (uint256 i = 0; i < tokens.length; i++) {
             if (tokenAmounts[i] == 0) continue;
-            if (!_checkSwapPath(tokens[i], srcToken, swapPaths[i]))
-                revert InvalidSwapPath(swapPaths[i]);
             if (tokens[i] == srcToken) {
                 totalPaid += tokenAmounts[i];
-            } else {
-                //exactOutput是指定输出代币的数量，让池子自动扣除所需要输入代币的数量
-                totalPaid += IETFSwapRouter(swapRouter).exactOutput(
-                    IETFSwapRouter.ExactOutputParams({
-                        //指src代币到其中一个代币的转换路径
-                        path: swapPaths[i],
-                        //接受地址
-                        recipient: address(this),
-                        //指定输出代币的数量
-                        amountOut: tokenAmounts[i],
-                        //预期输入src的最大值
-                        amountInMaximum: type(uint256).max
-                    })
-                );
+                continue;
             }
+            if (!_checkSwapPath(tokens[i], srcToken, swapPaths[i]))
+                revert InvalidSwapPath(swapPaths[i]);
+            // if (tokens[i] == srcToken) {
+            //     totalPaid += tokenAmounts[i];
+            // } else {
+            //exactOutput是指定输出代币的数量，让池子自动扣除所需要输入代币的数量
+            totalPaid += IETFSwapRouter(swapRouter).exactOutput(
+                IETFSwapRouter.ExactOutputParams({
+                    //指src代币到其中一个代币的转换路径
+                    path: swapPaths[i],
+                    //接受地址
+                    recipient: address(this),
+                    //指定输出代币的数量
+                    amountOut: tokenAmounts[i],
+                    //预期输入src的最大值
+                    amountInMaximum: type(uint256).max
+                })
+            );
         }
         //计算没有用完的src代币数量
         uint256 leftAfterPaid = maxSrcTokenAmount - totalPaid;
@@ -205,35 +214,71 @@ contract ETFTrading is IETFTrading, ERC20, Ownable {
         }
     }
 
+    // function _checkSwapPath(
+    //     address tokenA,
+    //     address tokenB,
+    //     //tokenA到tokenB的转换路径
+    //     //path例子：   [USDC][0.05%][WETH][0.3%][UNI]
+    //     bytes memory path
+    // ) internal pure returns (bool) {
+    //     (address firstToken, address secondToken, ) = path.decodeFirstPool();
+    //     if (tokenA == tokenB) {
+    //         if (
+    //             firstToken == tokenA &&
+    //             secondToken == tokenB &&
+    //             //路径中只有一个池子
+    //             !path.hasMultiplePools()
+    //         ) {
+    //             return true;
+    //         } else {
+    //             return false;
+    //         }
+    //     } else {
+    //         if (firstToken != tokenA) return false;
+    //         while (path.hasMultiplePools()) {
+    //             //path指向下一个池子
+    //             path = path.skipToken();
+    //         }
+    //         (, secondToken, ) = path.decodeFirstPool();
+    //         if (secondToken != tokenB) return false;
+    //         return true;
+    //     }
+    // }
+
     function _checkSwapPath(
-        address tokenA,
-        address tokenB,
-        //tokenA到tokenB的转换路径
-        //path例子：   [USDC][0.05%][WETH][0.3%][UNI]
+        address tokenOut,
+        address tokenIn,
         bytes memory path
     ) internal pure returns (bool) {
-        (address firstToken, address secondToken, ) = path.decodeFirstPool();
-        if (tokenA == tokenB) {
-            if (
-                firstToken == tokenA &&
-                secondToken == tokenB &&
-                //路径中只有一个池子
-                !path.hasMultiplePools()
-            ) {
-                return true;
-            } else {
-                return false;
-            }
-        } else {
-            if (firstToken != tokenA) return false;
-            while (path.hasMultiplePools()) {
-                //path指向下一个池子
-                path = path.skipToken();
-            }
-            (, secondToken, ) = path.decodeFirstPool();
-            if (secondToken != tokenB) return false;
-            return true;
+        if (path.length < 43) return false;
+
+        address firstToken;
+        address lastToken;
+
+        assembly {
+            //得到路径中第一个池子的输入代币地址
+            firstToken := shr(96, mload(add(path, 32)))
+            //得到路径中最后一个池子的输出代币地址
+            //path: 32位字节表示真实path的长度 + 真实的路径
+            //mload(path): 获得path中真实路径的长度
+            //sub(mload(path), 20): 获得真实路径从0开始到最后一个token开始的偏移位置
+            //add(path, 32): path中真实路径的起始位置
+            //add(add(path, 32), sub(mload(path), 20)): 真实路径的起始位置，加上最后一个token的偏移位置，就是最后一个token的位置
+            //mload(add(add(path, 32), sub(mload(path), 20))): 从最后一个token的位置加载出最后一个token的地址（20字节）
+            //shr(96, ...): 因为地址是20字节，而mload加载的是32字节，所以需要右移96位来得到正确的地址值
+
+            lastToken := shr(
+                96,
+                mload(add(add(path, 32), sub(mload(path), 20)))
+            )
         }
+
+        // return firstToken == tokenIn && lastToken == tokenOut;
+        // exactInput path: [tokenIn, fee, tokenOut]
+        // exactOutput path: [tokenOut, fee, tokenIn]
+        return
+            (firstToken == tokenIn && lastToken == tokenOut) ||
+            (firstToken == tokenOut && lastToken == tokenIn);
     }
 
     function redeemToToken(
@@ -254,7 +299,7 @@ contract ETFTrading is IETFTrading, ERC20, Ownable {
         for (uint256 i = 0; i < tokens.length; i++) {
             //代表此代币没有兑换出数量
             if (tokenAmounts[i] == 0) continue;
-            if (!_checkSwapPath(tokens[i], dstToken, swapPaths[i])) {
+            if (!_checkSwapPath(dstToken, tokens[i], swapPaths[i])) {
                 revert InvalidSwapPath(swapPaths[i]);
             }
             if (tokens[i] == dstToken) {
@@ -357,6 +402,7 @@ contract ETFTrading is IETFTrading, ERC20, Ownable {
     function getRedeemFee() public view returns (uint24) {
         return _redeemFee;
     }
+
     function getMinMintAmount() public view returns (uint256) {
         return _minMintAmount;
     }

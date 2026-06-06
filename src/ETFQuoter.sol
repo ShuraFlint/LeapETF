@@ -40,6 +40,7 @@ contract ETFQuoter is IETFQuoter {
         uint256 mintAmount
     ) external view returns (uint256 srcAmount, bytes[] memory swapPaths) {
         address[] memory tokens = IETFTrading(etf).getTokens();
+        //获得铸造mintAmount数量的ETF需要的各个成分token的数量
         uint256[] memory tokenAmounts = IETFTrading(etf).getInvestTokenAmounts(
             mintAmount
         );
@@ -48,11 +49,12 @@ contract ETFQuoter is IETFQuoter {
         for (uint256 i = 0; i < tokens.length; i++) {
             if (tokens[i] == srcToken) {
                 srcAmount += tokenAmounts[i];
-                swapPaths[i] = bytes.concat(
-                    bytes20(srcToken),
-                    bytes3(fees[0]),
-                    bytes20(srcToken)
-                );
+                // swapPaths[i] = bytes.concat(
+                //     bytes20(srcToken),
+                //     bytes3(fees[0]),
+                //     bytes20(srcToken)
+                // );
+                swapPaths[i] = "";
             } else {
                 (bytes memory path, uint256 amountIn) = quoteExactOut(
                     srcToken,
@@ -80,11 +82,12 @@ contract ETFQuoter is IETFQuoter {
         for (uint256 i = 0; i < tokens.length; i++) {
             if (tokens[i] == dstToken) {
                 dstAmount += tokenAmounts[i];
-                swapPaths[i] = bytes.concat(
-                    bytes20(dstToken),
-                    bytes3(fees[0]),
-                    bytes20(dstToken)
-                );
+                // swapPaths[i] = bytes.concat(
+                //     bytes20(dstToken),
+                //     bytes3(fees[0]),
+                //     bytes20(dstToken)
+                // );
+                swapPaths[i] = "";
             } else {
                 (bytes memory path, uint256 amountOut) = quoteExactIn(
                     tokens[i],

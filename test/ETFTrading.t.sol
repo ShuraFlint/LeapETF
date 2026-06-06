@@ -8,6 +8,7 @@ import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {IUniswapV3Quoter} from "../src/interfaces/IUniswapV3Quoter.sol";
 import {ETFTrading} from "../src/ETFTrading.sol";
 import {IETFQuoter} from "../src/interfaces/IETFQuoter.sol";
+import {FullMath} from "../src/libraries/FullMath.sol";
 
 //forge test --match-contract ETFTradingSepoliaTest --fork-url $SEPOLIA_RPC_URL -vvv
 
@@ -80,6 +81,7 @@ contract ETFTradingSepoliaTest is Test {
 
         //Add leading zeros
         for (uint256 i = 0; i < decimals - fractionLen; i++) {
+            //如果decimals是6，但是fractionLen是2，那么就需要在小数点后面加四个0，在加fraction，拼接 → "123.000045"
             result = string(abi.encodePacked(result, "0"));
         }
 
@@ -116,6 +118,7 @@ contract ETFTradingSepoliaTest is Test {
     // Helper function to mint tokens to a user for testing
     function mintTokensToUser(address user, uint256 etfShareMultiplier) public {
         //Mint tokens based on the ETF share composition multiplied by the specified factor
+        //给user发LBTC_TOKEN代币，数量是LBTC_PER_SHARE * etfShareMultiplier
         deal(LBTC_TOKEN, user, LBTC_PER_SHARE * etfShareMultiplier);
         deal(LETH_TOKEN, user, LETH_PER_SHARE * etfShareMultiplier);
         deal(LINK_TOKEN, user, LINK_PER_SHARE * etfShareMultiplier);
@@ -317,6 +320,7 @@ contract ETFTradingSepoliaTest is Test {
     }
 
     function test_InvestTokenAmounts() public view {
+        // testMintAmount = bound(testMintAmount, 1, 1e40);
         //Test getInvestTokenAmounts function
         uint256 testMintAmount = 1e18;
         uint256[] memory investAmounts = etfTrading.getInvestTokenAmounts(
@@ -327,6 +331,7 @@ contract ETFTradingSepoliaTest is Test {
         assertEq(investAmounts.length, 4, "ETF token amount length mismatch");
 
         // log the token amounts
+        console.log("totalsupply", etfTrading.totalSupply());
         console.log("--- Token Amounts Required to Mint 1 ETF ---");
         console.log(
             "LBTC amount:",
@@ -346,10 +351,77 @@ contract ETFTradingSepoliaTest is Test {
         );
 
         //since this is the first investment, the amounts should match our initial configuration
-        assertEq(investAmounts[0], LBTC_PER_SHARE, "LBTC amount mismatch");
-        assertEq(investAmounts[1], LETH_PER_SHARE, "LETH amount mismatch");
-        assertEq(investAmounts[2], LINK_PER_SHARE, "LINK amount mismatch");
-        assertEq(investAmounts[3], USDC_PER_SHARE, "USDC amount mismatch");
+        // 使用 mulDivRoundingUp 与合约保持一致
+        assertEq(
+            investAmounts[0],
+            FullMath.mulDivRoundingUp(LBTC_PER_SHARE, testMintAmount, 1e18),
+            "LBTC amount mismatch"
+        );
+        assertEq(
+            investAmounts[1],
+            FullMath.mulDivRoundingUp(LETH_PER_SHARE, testMintAmount, 1e18),
+            "LETH amount mismatch"
+        );
+        assertEq(
+            investAmounts[2],
+            FullMath.mulDivRoundingUp(LINK_PER_SHARE, testMintAmount, 1e18),
+            "LINK amount mismatch"
+        );
+        assertEq(
+            investAmounts[3],
+            FullMath.mulDivRoundingUp(USDC_PER_SHARE, testMintAmount, 1e18),
+            "USDC amount mismatch"
+        );
+    }
+
+    function test_realInvest() public {
+        // ETFTrading realEtfTrading = ETFTrading(
+        //     payable(0x3C29299Eee8A4c78EEAAb147B58aeA470013791a)
+        // );
+
+        console.log(
+            "deployer LBTC balance before invest:",
+            formatAmount(IERC20(LBTC_TOKEN).balanceOf(deployer), LBTC_DECIMALS)
+        );
+
+        //批准etfTrading合约能够使用用户deployer，4中代币的数量
+        approveTokensForETF(deployer, 50);
+
+        console.log(
+            "deployer allowance for realEtfTrading:",
+            IERC20(LBTC_TOKEN).allowance(deployer, address(etfTrading))
+        );
+
+        uint256 mintAmount = 1e18;
+        ////选择目标token，输入你想得到多少的ETF，显示你需要多少数量的目标token以及兑换路径
+        (uint256 srcAmount, bytes[] memory swapPaths) = etfQuoter
+            .quoteInvestWithToken(address(etfTrading), LBTC_TOKEN, mintAmount);
+
+        console.log(
+            "Required LBTC amount:",
+            formatAmount(srcAmount, LBTC_DECIMALS)
+        );
+
+        console.log(
+            "before ETF balance of deployer:",
+            formatAmount(etfTrading.balanceOf(deployer), 18)
+        );
+
+        uint256 maxSrcTokenAmount = srcAmount * 2;
+        vm.startPrank(deployer);
+        etfTrading.investWithToken(
+            LBTC_TOKEN,
+            deployer,
+            mintAmount,
+            maxSrcTokenAmount,
+            swapPaths
+        );
+        vm.stopPrank();
+
+        console.log(
+            "after ETF balance of deployer:",
+            formatAmount(etfTrading.balanceOf(deployer), 18)
+        );
     }
 
     function test_Invest() public {
@@ -374,6 +446,7 @@ contract ETFTradingSepoliaTest is Test {
             "Required LBTC amount:",
             formatAmount(srcAmount, LBTC_DECIMALS)
         );
+        console.log("Swap paths:", swapPaths.length);
 
         //4.Perform investment with LBTC as source token
         uint256 maxSrcTokenAmount = srcAmount * 2;
